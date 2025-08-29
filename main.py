@@ -16,12 +16,9 @@ class TcpClient:
     def connect(self, host, port):
         self.close()
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # short timeout only for the connect call
         s.settimeout(3)
         s.connect((host, port))
-        # after connect: NO timeout for recv (blocking)
         s.settimeout(None)
-        # optional keepalive
         try:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         except Exception:
@@ -35,7 +32,7 @@ class TcpClient:
         buf = b""
         try:
             while self.alive:
-                data = self.sock.recv(1024)  # blocking; no timeout now
+                data = self.sock.recv(1024)
                 if not data:
                     break
                 buf += data
@@ -73,28 +70,26 @@ class TcpClient:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Strobe / Lamp Controller (TCP)")
-        self.geometry("660x460")
+        self.title("Strobe / Lamp Controller (TCP) Mk3 Manual")
+        self.geometry("780x560")
 
         root = ttk.Frame(self, padding=10)
         root.pack(fill="both", expand=True)
 
-        # Header with logo
+        # Header
         header = ttk.Frame(root)
         header.pack(fill="x", pady=(0,8))
-        # load cris.png from same folder (Tk PhotoImage supports PNG on Tk>=8.6)
         self.logo_img = None
         try:
             self.logo_img = tk.PhotoImage(file="cris_logo.png")
-            self.logo_img = self.logo_img.subsample(6, 6)  # shrink by factor 4
+            self.logo_img = self.logo_img.subsample(6, 6)
             ttk.Label(header, image=self.logo_img).pack(side="left")
-        except Exception as e:
+        except Exception:
             ttk.Label(header, text="CRIS", font=("Segoe UI", 16, "bold")).pack(side="left")
         ttk.Label(header, text="Strobe & Lamp Controller", font=("Segoe UI", 14)).pack(side="left", padx=10)
 
         # Connection row
-        row = ttk.Frame(root)
-        row.pack(fill="x", pady=4)
+        row = ttk.Frame(root); row.pack(fill="x", pady=4)
         ttk.Label(row, text="IP:").pack(side="left")
         self.ip_var = tk.StringVar(value=DEFAULT_HOST)
         ttk.Entry(row, textvariable=self.ip_var, width=18).pack(side="left", padx=5)
@@ -108,7 +103,6 @@ class App(tk.Tk):
         sliders = ttk.LabelFrame(root, text="Intensities")
         sliders.pack(fill="x", pady=10)
 
-        # Strobe intensity (0..100)
         srow = ttk.Frame(sliders); srow.pack(fill="x", pady=6)
         ttk.Label(srow, text="Strobe intensity").pack(side="left")
         self.strobe_scale = ttk.Scale(srow, from_=0, to=100, orient="horizontal",
@@ -117,7 +111,6 @@ class App(tk.Tk):
         self.lbl_strobe = ttk.Label(srow, width=4, anchor="e", text="0"); self.lbl_strobe.pack(side="left")
         self.strobe_scale.bind("<ButtonRelease-1>", lambda e: self.send_cmd(f"STROBE_INTENSITY {int(float(self.strobe_scale.get()))}"))
 
-        # Lamp intensity (0..100)
         lrow = ttk.Frame(sliders); lrow.pack(fill="x", pady=6)
         ttk.Label(lrow, text="Lamp intensity").pack(side="left")
         self.lamp_scale = ttk.Scale(lrow, from_=0, to=100, orient="horizontal",
@@ -126,17 +119,13 @@ class App(tk.Tk):
         self.lbl_lamp = ttk.Label(lrow, width=4, anchor="e", text="0"); self.lbl_lamp.pack(side="left")
         self.lamp_scale.bind("<ButtonRelease-1>", lambda e: self.send_cmd(f"LAMP_INTENSITY {int(float(self.lamp_scale.get()))}"))
 
-        # Lamp controls
+        # Lamp controls + Status
         lamp_ctrl = ttk.Frame(root); lamp_ctrl.pack(fill="x", pady=6)
-        ttk.Button(lamp_ctrl, text="Lamp ON",  command=lambda: self.send_cmd("LAMP ON")).pack(side="left", padx=5)
         ttk.Button(lamp_ctrl, text="Lamp OFF", command=lambda: self.send_cmd("LAMP OFF")).pack(side="left", padx=5)
+        ttk.Button(lamp_ctrl, text="Status",   command=lambda: self.send_cmd("STATUS")).pack(side="left", padx=10)
 
-        # Status button
-        ttk.Button(lamp_ctrl, text="Status", command=lambda: self.send_cmd("STATUS")).pack(side="left", padx=10)
-
-        # Custom command row
-        cust = ttk.Frame(root);
-        cust.pack(fill="x", pady=8)
+        # Custom command
+        cust = ttk.Frame(root); cust.pack(fill="x", pady=8)
         ttk.Label(cust, text="Custom:").pack(side="left")
         self.cmd_var = tk.StringVar(value="STATUS")
         e = ttk.Entry(cust, textvariable=self.cmd_var)
@@ -144,16 +133,32 @@ class App(tk.Tk):
         e.bind("<Return>", lambda _: self.send_cmd(self.cmd_var.get()))
         ttk.Button(cust, text="Send", command=lambda: self.send_cmd(self.cmd_var.get())).pack(side="left")
 
-        # Log
-        self.log = tk.Text(root, height=12, state="disabled")
-        self.log.pack(fill="both", expand=True, pady=8)
+        # Two text boxes side-by-side: Log (left) and Received (right)
+        views = ttk.Frame(root); views.pack(fill="both", expand=True, pady=8)
+        # Left: Log
+        log_frame = ttk.LabelFrame(views, text="Log")
+        log_frame.pack(side="left", fill="both", expand=True, padx=(0,6))
+        self.log = tk.Text(log_frame, height=14, state="disabled", wrap="word")
+        self.log.pack(fill="both", expand=True)
+        log_btns = ttk.Frame(log_frame); log_btns.pack(fill="x")
+        ttk.Button(log_btns, text="Clear log", command=self.clear_log).pack(side="right", padx=4, pady=4)
+
+        # Right: Received data
+        rx_frame = ttk.LabelFrame(views, text="Received data")
+        rx_frame.pack(side="left", fill="both", expand=True, padx=(6,0))
+        self.rx = tk.Text(rx_frame, height=14, state="disabled", wrap="word")
+        self.rx.pack(fill="both", expand=True)
+        rx_btns = ttk.Frame(rx_frame); rx_btns.pack(fill="x")
+        ttk.Button(rx_btns, text="Clear received", command=self.clear_rx).pack(side="right", padx=4, pady=4)
 
         self.client = TcpClient(self.on_line_received)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def _update_val(self, label, v):
-        try: label.config(text=str(int(float(v))))
-        except: pass
+        try:
+            label.config(text=str(int(float(v))))
+        except:
+            pass
 
     def append_log(self, text):
         self.log.configure(state="normal")
@@ -161,8 +166,44 @@ class App(tk.Tk):
         self.log.see("end")
         self.log.configure(state="disabled")
 
+    def clear_log(self):
+        self.log.configure(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.configure(state="disabled")
+
+    def append_rx(self, text):
+        self.rx.configure(state="normal")
+        self.rx.insert("end", text + "\n")
+        self.rx.see("end")
+        self.rx.configure(state="disabled")
+
+    def clear_rx(self):
+        self.rx.configure(state="normal")
+        self.rx.delete("1.0", "end")
+        self.rx.configure(state="disabled")
+
+    def _extract_rx_payload(self, line: str) -> str | None:
+        """
+        Return just the RS485 device payload, or None if the line
+        is not an RS485 line.
+        """
+        if line.startswith("RS485: "):
+            return line[7:]
+        tag = "[RS485<-] "
+        if line.startswith(tag):
+            return line[len(tag):]
+        return None  # ignore all other messages
+
     def on_line_received(self, line):
-        self.after(0, lambda: self.append_log(f"<< {line}"))
+        def ui():
+            # Always log everything
+            self.append_log(f"<< {line}")
+            # Only append to Received box if it's RS485 payload
+            payload = self._extract_rx_payload(line)
+            if payload:
+                self.append_rx(payload)
+
+        self.after(0, ui)
 
     def on_connect(self):
         host = self.ip_var.get().strip()
