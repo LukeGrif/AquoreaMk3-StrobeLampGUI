@@ -5,8 +5,8 @@
 // ---------- RS-485 pins ----------
 #define DE 3
 #define RE 4
-#define RS485_RX 8
-#define RS485_TX 9
+#define RS485_RX 8  // RO
+#define RS485_TX 9  // DI
 SoftwareSerial RS485Serial(RS485_RX, RS485_TX);  // RX, TX
 
 // ---------- Ethernet (ENC28J60) ----------
@@ -27,11 +27,23 @@ bool lampOn = false;
 
 // ---------- Forward decl ----------
 void rs485_send_line(const String &s);
+void rs485_poll(EthernetClient *client);
 
 // ---------- TCP helpers ----------
 void sendLine(EthernetClient &c, const char *s) {
   c.write((const uint8_t *)s, strlen(s));
   c.write('\n');
+}
+
+// Forward any line beginning with '~' over RS-485.
+bool maybe_forward_rs485(const String &cmd, EthernetClient &client) {
+  if (cmd.length() && (cmd.charAt(0) == '~' || cmd.charAt(0) == '$')) {
+    rs485_send_line(cmd);
+    Serial.print(F("[FWD RS485] ")); Serial.println(cmd);
+    sendLine(client, "OK FORWARDED");
+    return true;
+  }
+  return false;
 }
 
 // ===== RS-485 MONITOR =====
@@ -102,12 +114,16 @@ void handleCommand(const String &line, EthernetClient &client) {
   cmd.trim();
   if (cmd.length() == 0) return;
 
-  //Lamp OFF
+  // 1) CUSTOM / RAW: forward "~..." to RS-485 and exit (no error)
+  if (maybe_forward_rs485(cmd, client)) return;
+
+  // 2) Known simulated commands
+
+  // Lamp OFF
   if (cmd.equalsIgnoreCase("LAMP OFF")) {
     String data = "~device set lamp:000|SUBC24991";
     rs485_send_line(data);
-    Serial.print("Data sent: ");
-    Serial.println(data);
+    Serial.print("Data sent: "); Serial.println(data);
 
     lampOn = false;
     Serial.println(F("[CMD] LAMP OFF (simulated)"));
@@ -128,8 +144,7 @@ void handleCommand(const String &line, EthernetClient &client) {
         String data = String(buf);
 
         rs485_send_line(data);
-        Serial.print("Data sent: ");
-        Serial.println(data);
+        Serial.print("Data sent: "); Serial.println(data);
 
         Serial.print(F("[CMD] STROBE_INTENSITY -> "));
         Serial.println(strobeIntensity);
@@ -156,8 +171,7 @@ void handleCommand(const String &line, EthernetClient &client) {
         String data = String(buf);
 
         rs485_send_line(data);
-        Serial.print("Data sent: ");
-        Serial.println(data);
+        Serial.print("Data sent: "); Serial.println(data);
 
         Serial.print(F("[CMD] LAMP_INTENSITY -> "));
         Serial.println(lampIntensity);
@@ -175,8 +189,7 @@ void handleCommand(const String &line, EthernetClient &client) {
   if (cmd.equalsIgnoreCase("STATUS")) {
     String data = "~comms print status|SUBC24991";
     rs485_send_line(data);
-    Serial.print("Data sent: ");
-    Serial.println(data);
+    Serial.print("Data sent: "); Serial.println(data);
 
     Serial.println(F("[CMD] STATUS"));
     sendLine(client, "OK STATUS");
@@ -185,7 +198,7 @@ void handleCommand(const String &line, EthernetClient &client) {
 
   Serial.print(F("[CMD] UNKNOWN -> "));
   Serial.println(cmd);
-  sendLine(client, "ERR UNKNOWN CMD");
+  sendLine(client, "UNKNOWN CMD");
 }
 
 // ---------- RS-485 helpers ----------
@@ -205,7 +218,7 @@ void setup() {
   Serial.begin(9600);
 
   // RS-485 start (match peer baud rate)
-  RS485Serial.begin(9600);  // Consider 19200–57600 for SoftwareSerial reliability
+  RS485Serial.begin(9600);
   pinMode(DE, OUTPUT);
   pinMode(RE, OUTPUT);
   digitalWrite(DE, LOW);  // start in receive
@@ -219,18 +232,16 @@ void setup() {
   Ethernet.begin(mac, ip, dnsServer, gateway, subnet);
   server.begin();
 
-  Serial.print(F("IP: "));
-  Serial.println(Ethernet.localIP());
-  Serial.print(F("Subnet: "));
-  Serial.println(subnet);
-  Serial.print(F("Gateway: "));
-  Serial.println(gateway);
+  Serial.print(F("IP: "));      Serial.println(Ethernet.localIP());
+  Serial.print(F("Subnet: "));  Serial.println(subnet);
+  Serial.print(F("Gateway: ")); Serial.println(gateway);
   auto link = Ethernet.linkStatus();
   Serial.print(F("Link: "));
   Serial.println(link == LinkON ? F("ON") : (link == LinkOFF ? F("OFF") : F("UNKNOWN")));
-  Serial.print(F("TCP server listening on port "));
-  Serial.println(PORT);
-  Serial.println(F("Commands: LAMP ON | LAMP OFF | STROBE_INTENSITY <0..100> | LAMP_INTENSITY <0..100>"));
+  Serial.print(F("TCP server listening on port ")); Serial.println(PORT);
+  Serial.println(F("Commands:"));
+  Serial.println(F("  ~... (forwarded to RS-485)"));
+  Serial.println(F("  LAMP OFF | STROBE_INTENSITY <0..100> | LAMP_INTENSITY <0..100> | STATUS"));
 }
 
 void loop() {
@@ -239,10 +250,7 @@ void loop() {
 
   // Accept a client if available
   EthernetClient client = server.available();
-  if (!client) {
-    // Still keep monitoring RS485
-    return;
-  }
+  if (!client) return;
 
   Serial.println(F("[NET] Client connected"));
 
@@ -259,7 +267,7 @@ void loop() {
       }
     }
 
-    // While client is connected, also stream RS485 to them
+    // While client is connected, also stream RS-485 to them
     rs485_poll(&client);
   }
 

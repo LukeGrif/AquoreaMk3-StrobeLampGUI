@@ -1,3 +1,6 @@
+import os
+import sys
+import subprocess
 import socket
 import threading
 import tkinter as tk
@@ -5,6 +8,22 @@ from tkinter import ttk, messagebox
 
 DEFAULT_HOST = "192.168.2.70"
 DEFAULT_PORT = 9000
+MANUAL_FILENAME = "Aquorea Mk3 Manual.pdf"  # put this PDF next to main.py
+
+def resource_path(rel_path: str) -> str:
+    """Return absolute path to resource, works for dev and PyInstaller."""
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, rel_path)
+    return os.path.join(os.path.abspath("."), rel_path)
+
+def open_file_with_default_app(path: str):
+    """Open a file with the OS default application."""
+    if sys.platform.startswith("win"):
+        os.startfile(path)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
 
 class TcpClient:
     def __init__(self, on_line):
@@ -18,7 +37,7 @@ class TcpClient:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(3)
         s.connect((host, port))
-        s.settimeout(None)
+        s.settimeout(None)  # blocking recv
         try:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         except Exception:
@@ -52,9 +71,16 @@ class TcpClient:
             self.on_line("[Disconnected]")
 
     def send_line(self, text: str):
+        """
+        Send EXACT text as typed. We do NOT strip or uppercase it.
+        We only ensure a single trailing newline if one isn't present.
+        """
         if not self.sock:
             raise RuntimeError("Not connected")
-        data = (text.strip() + "\n").encode()
+        if text.endswith("\n"):
+            data = text.encode()
+        else:
+            data = (text + "\n").encode()
         self.sock.sendall(data)
 
     def close(self):
@@ -70,8 +96,8 @@ class TcpClient:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Strobe / Lamp Controller (TCP) Mk3 Manual")
-        self.geometry("780x560")
+        self.title("Strobe / Lamp Controller (TCP) Aquorea Mk3")
+        self.geometry("820x580")
 
         root = ttk.Frame(self, padding=10)
         root.pack(fill="both", expand=True)
@@ -87,6 +113,9 @@ class App(tk.Tk):
         except Exception:
             ttk.Label(header, text="CRIS", font=("Segoe UI", 16, "bold")).pack(side="left")
         ttk.Label(header, text="Strobe & Lamp Controller", font=("Segoe UI", 14)).pack(side="left", padx=10)
+
+        # Manual button (opens PDF)
+        ttk.Button(header, text="Open Manual (PDF)", command=self.open_manual).pack(side="right")
 
         # Connection row
         row = ttk.Frame(root); row.pack(fill="x", pady=4)
@@ -124,16 +153,16 @@ class App(tk.Tk):
         ttk.Button(lamp_ctrl, text="Lamp OFF", command=lambda: self.send_cmd("LAMP OFF")).pack(side="left", padx=5)
         ttk.Button(lamp_ctrl, text="Status",   command=lambda: self.send_cmd("STATUS")).pack(side="left", padx=10)
 
-        # Custom command
+        # Custom command (RAW — exact text)
         cust = ttk.Frame(root); cust.pack(fill="x", pady=8)
         ttk.Label(cust, text="Custom:").pack(side="left")
-        self.cmd_var = tk.StringVar(value="STATUS")
+        self.cmd_var = tk.StringVar(value="~device set lamp:046|SUBC24991")
         e = ttk.Entry(cust, textvariable=self.cmd_var)
         e.pack(side="left", fill="x", expand=True, padx=6)
-        e.bind("<Return>", lambda _: self.send_cmd(self.cmd_var.get()))
-        ttk.Button(cust, text="Send", command=lambda: self.send_cmd(self.cmd_var.get())).pack(side="left")
+        e.bind("<Return>", lambda _: self.send_raw())
+        ttk.Button(cust, text="Send", command=self.send_raw).pack(side="left")
 
-        # Two text boxes side-by-side: Log (left) and Received (right)
+        # Two text boxes: Log (left) and Received (right)
         views = ttk.Frame(root); views.pack(fill="both", expand=True, pady=8)
         # Left: Log
         log_frame = ttk.LabelFrame(views, text="Log")
@@ -154,6 +183,18 @@ class App(tk.Tk):
         self.client = TcpClient(self.on_line_received)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
+    # ---------- Manual open ----------
+    def open_manual(self):
+        path = resource_path(MANUAL_FILENAME)
+        if not os.path.exists(path):
+            messagebox.showerror("Manual not found", f"Couldn't find:\n{path}")
+            return
+        try:
+            open_file_with_default_app(path)
+        except Exception as e:
+            messagebox.showerror("Error opening manual", str(e))
+
+    # ---------- UI helpers ----------
     def _update_val(self, label, v):
         try:
             label.config(text=str(int(float(v))))
@@ -182,29 +223,24 @@ class App(tk.Tk):
         self.rx.delete("1.0", "end")
         self.rx.configure(state="disabled")
 
-    def _extract_rx_payload(self, line: str) -> str | None:
-        """
-        Return just the RS485 device payload, or None if the line
-        is not an RS485 line.
-        """
+    # Keep only RS-485 payload in the right pane when tagged
+    def _extract_rx_payload(self, line: str):
         if line.startswith("RS485: "):
             return line[7:]
         tag = "[RS485<-] "
         if line.startswith(tag):
             return line[len(tag):]
-        return None  # ignore all other messages
+        return None
 
     def on_line_received(self, line):
         def ui():
-            # Always log everything
             self.append_log(f"<< {line}")
-            # Only append to Received box if it's RS485 payload
             payload = self._extract_rx_payload(line)
             if payload:
                 self.append_rx(payload)
-
         self.after(0, ui)
 
+    # ---------- Connect / Disconnect ----------
     def on_connect(self):
         host = self.ip_var.get().strip()
         try:
@@ -218,13 +254,25 @@ class App(tk.Tk):
         self.client.close()
         self.append_log("[Disconnected]")
 
+    # ---------- Sending ----------
     def send_cmd(self, s):
+        # Used by buttons/sliders (kept as-is)
         try:
             self.client.send_line(s)
             self.append_log(f">> {s}")
         except Exception as e:
             messagebox.showwarning("Send failed", str(e))
 
+    def send_raw(self):
+        # Used by the Custom box — sends the EXACT text typed
+        try:
+            text = self.cmd_var.get()
+            self.client.send_line(text)
+            self.append_log(f">> {text}")
+        except Exception as e:
+            messagebox.showwarning("Send failed", str(e))
+
+    # ---------- Close ----------
     def on_close(self):
         self.client.close()
         self.destroy()
