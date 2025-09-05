@@ -60,7 +60,7 @@ STATUS               → forwarded as ~Status strobe=42 lamp=80 lamp_on=1
 Install dependencies in a virtual environment:
 ```bash
 python -m venv venv
-source venv/bin/activate  # Linux / macOS
+source venv/bin/activate  # Linux
 ```
 
 ---
@@ -80,6 +80,48 @@ python main.py
 - Use sliders and buttons to send commands  
 - View responses in the log window  
 
+---
+
+---
+
+## Building a Windows Executable
+
+We packaged the Python Tkinter GUI into a standalone **Windows executable (.exe)** using [PyInstaller](https://pyinstaller.org/).  
+This allows the program to run on any Windows machine without needing Python or the source code.
+
+### Steps
+
+1. **Create and activate a virtual environment**
+   ```powershell
+   py -3 -m venv venv
+   venv\Scripts\activate.bat   # (on Windows Command Prompt)
+Install required dependencies
+2. **Install required dependencies**
+   ```powershell
+    pip install --upgrade pip
+    pip install pyinstaller
+
+
+2. **Build with PyInstaller From the project root:**
+   ```powershell
+    pyinstaller --onefile --windowed ^
+      --name StrobeGUI ^
+      --add-data "cris_logo.png;." ^
+      --add-data "Aquorea Mk3 Manual.pdf;." ^
+      main.py
+    --onefile → bundle everything into a single .exe
+    
+    --windowed → no console window appears
+    
+    --add-data → include extra resources (logo and PDF manual)
+
+Find your EXE
+The compiled application will be located at:
+
+text
+Copy code
+dist\StrobeGUI.exe
+   
 ---
 
 ## Notes

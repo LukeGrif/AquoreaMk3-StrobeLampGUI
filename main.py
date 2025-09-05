@@ -107,7 +107,9 @@ class App(tk.Tk):
         header.pack(fill="x", pady=(0,8))
         self.logo_img = None
         try:
-            self.logo_img = tk.PhotoImage(file="cris_logo.png")
+            # wherever you load the logo:
+            logo_path = resource_path("cris_logo.png")
+            self.logo_img = tk.PhotoImage(file=logo_path)
             self.logo_img = self.logo_img.subsample(6, 6)
             ttk.Label(header, image=self.logo_img).pack(side="left")
         except Exception:
